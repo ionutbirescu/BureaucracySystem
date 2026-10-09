@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Runner demonstrating the concurrency bugs in {@link FaultyOffice}:
  * 1. Unsynchronized ArrayList queue under concurrent additions.
- * 2. Check-then-act race between dual dispatchers causing IndexOutOfBoundsException.
+ * 2. Check-then-act race between dual dispatchers causing IndexOutOfBoundsException / lost requests.
  * 3. Lost updates on unsynchronized servedCount under contention.
  * 4. Deviations from FIFO ordering, duplicate completions, and skipped customers.
  */
@@ -56,12 +56,12 @@ public final class Faulty1Demo {
         List<String> enqueueExceptions = new CopyOnWriteArrayList<>();
         AtomicInteger enqueuedSuccessfully = new AtomicInteger();
 
-        for (int p = 0; p < PRODUCER_THREADS; p++) {
-            final int producerId = p;
+        for (int producerId = 0; producerId < PRODUCER_THREADS; producerId++) {
             final int startId = producerId * CUSTOMERS_PER_PRODUCER + 1;
             final int endId = startId + CUSTOMERS_PER_PRODUCER - 1;
+            final String threadName = "customer-producer-" + producerId;
 
-            Thread.ofPlatform().name("customer-producer-" + producerId).start(() -> {
+            Thread.ofPlatform().name(threadName).start(() -> {
                 try {
                     startGate.await();
                     for (int id = startId; id <= endId; id++) {
@@ -89,11 +89,11 @@ public final class Faulty1Demo {
             });
         }
 
-        // Release all producers simultaneously to maximize queue contention (Bug 1)
+        // Release all producers simultaneously to maximize queue contention
         startGate.countDown();
         producersDone.await();
 
-        // 4. Await completions with a bounded deadline to expose crashed dispatchers & lost futures (Bug 2)
+        // 4. Await completions with a bounded deadline to expose crashed dispatchers & lost futures
         long deadline = System.currentTimeMillis() + AWAIT_TIMEOUT_MS;
         List<Integer> lostFutureCustomerIds = new ArrayList<>();
         int successfulCompletions = 0;
@@ -119,8 +119,7 @@ public final class Faulty1Demo {
         }
 
         // 5. Gather metrics and consistency results
-        int totalArrived = TOTAL_CUSTOMERS;
-        int officeServedCount = office.getServedCount(); // package-private access
+        int officeServedCount = office.getServedCount();
 
         // FIFO order violation checks
         int fifoViolations = 0;
@@ -155,7 +154,7 @@ public final class Faulty1Demo {
         }
 
         // 6. Print the comparison report
-        printComparisonReport(logger, totalArrived, enqueuedSuccessfully.get(),
+        printComparisonReport(logger, TOTAL_CUSTOMERS, enqueuedSuccessfully.get(),
                 successfulCompletions, failedCompletions, officeServedCount,
                 fifoViolations, fifoViolationSamples, duplicateCustomerIds,
                 unservedCustomerIds, lostFutureCustomerIds,
