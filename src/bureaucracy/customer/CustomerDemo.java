@@ -22,7 +22,7 @@ public final class CustomerDemo {
     private static final int CUSTOMERS = 6;
     private static final double TURN_AWAY_PROBABILITY = 0.2;
 
-    public static void main(String[] args) throws InterruptedException, IOException {
+    static void main(String[] args) throws InterruptedException, IOException {
         SimulationLogger logger = new SimulationLogger();
 
         // 1. Load config and validate DAG
