@@ -8,6 +8,8 @@ import bureaucracy.office.OfficeAPI;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 public final class DeadlockOffice implements  OfficeAPI {
     // Before issuing a document, the counter needs documentId from office
@@ -44,7 +46,7 @@ public final class DeadlockOffice implements  OfficeAPI {
             throw new IllegalArgumentException("Document " + documentId + " is not issuable by office" + id);
         }
         CompletableFuture<Boolean> future = new CompletableFuture<>();
-        waitingQueue.offer(new ServiceRequest(customer, doc, future));
+        waitingQueue.add(new ServiceRequest(customer, doc, future));
         logger.debug(id, customer + " in queue for " + doc.getName() + " (queue: ~" + waitingQueue.size() + ")");
         return future;
     }
@@ -63,6 +65,10 @@ public final class DeadlockOffice implements  OfficeAPI {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread dispatcherThread;
 
+    // Signalled when a counter comes back from a break, so the dispatcher doesn't have to poll
+    private final ReentrantLock availabilityLock = new ReentrantLock();
+    private final Condition counterAvailable = availabilityLock.newCondition();
+
     public void requireStamp(String documentId, OfficeAPI stampOffice, String stampDocumentId) {
         if (!issuableDocuments.containsKey(documentId)) {
             throw new IllegalArgumentException("Document " + documentId + " is not issuable by office" + id);
@@ -72,6 +78,7 @@ public final class DeadlockOffice implements  OfficeAPI {
 
     public void start() {
         running.set(true);
+        counters.forEach(c -> c.setAvailabilityListener(this::signalCounterAvailable));
         dispatcherThread = new Thread(this::dispatchLoop, "office-"+id+"-dispatcher");
         dispatcherThread.setDaemon(true);
         dispatcherThread.start();
@@ -98,16 +105,7 @@ public final class DeadlockOffice implements  OfficeAPI {
                 // Once every counter is held by a customer waiting elsewhere,
                 // the dispatcher blocks here and the whole office stops
                 freeCounters.acquire();
-                DeadlockCounter counter = pickFreeCounter();
-                if (counter == null) {
-                    freeCounters.release();
-                    waitingQueue.offer(req);
-                    logger.warn(id, "No counter available, customer " + req.customer + " will wait");
-                    Thread.sleep(100);
-                    continue;
-                }
-
-                final DeadlockCounter c = counter;
+                final DeadlockCounter c = awaitAvailableCounter(req);
                 StampRequirement stamp = stampRequirements.get(req.document().getId());
                 Thread.ofVirtual().name("serve-" + req.customer().getId()).start(() -> {
                     try {
@@ -115,7 +113,7 @@ public final class DeadlockOffice implements  OfficeAPI {
                         if (served) {
                             req.future().complete(true);
                         } else {
-                            waitingQueue.offer(req);
+                            waitingQueue.add(req);
                             logger.warn(id, req.customer() + " re-queue (counter unavailable)");
                         }
                     }catch (InterruptedException e) {
@@ -137,6 +135,33 @@ public final class DeadlockOffice implements  OfficeAPI {
             leftover.future().complete(false);
         }
         logger.info(id, "Dispatcher stopped");
+    }
+
+    // Blocks until some counter is open and not on break; the request keeps its place in line
+    private DeadlockCounter awaitAvailableCounter(ServiceRequest req) throws InterruptedException {
+        availabilityLock.lock();
+        try {
+            DeadlockCounter counter = pickFreeCounter();
+            if (counter == null) {
+                logger.warn(id, "No counter available, customer " + req.customer() + " will wait");
+            }
+            while (counter == null) {
+                counterAvailable.await();
+                counter = pickFreeCounter();
+            }
+            return counter;
+        } finally {
+            availabilityLock.unlock();
+        }
+    }
+
+    private void signalCounterAvailable() {
+        availabilityLock.lock();
+        try {
+            counterAvailable.signalAll();
+        } finally {
+            availabilityLock.unlock();
+        }
     }
 
     private DeadlockCounter pickFreeCounter() {

@@ -30,6 +30,8 @@ public final class DeadlockCounter {
     //Who is standing at the counter right now, only used to report the deadlock
     private volatile Customer heldBy;
 
+    // Lets the office wake its dispatcher when this counter returns from a break
+    private volatile Runnable availabilityListener = () -> {};
 
     public DeadlockCounter(String id, String officeId, SimulationLogger logger) {
         this.id = id;
@@ -112,6 +114,11 @@ public final class DeadlockCounter {
         finally {
             breakLock.unlock();
         }
+        availabilityListener.run();
+    }
+
+    public void setAvailabilityListener(Runnable listener) {
+        this.availabilityListener = listener;
     }
 
     public void close() {
