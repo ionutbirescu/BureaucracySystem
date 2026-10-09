@@ -66,6 +66,12 @@ public final class CoffeeBreakDemo {
         startGun.countDown();
 
         boolean allFinished = finishLatch.await(10, TimeUnit.SECONDS);
+
+        // Join customer threads to guarantee clean thread completion and query customerThreads
+        for (Thread t : customerThreads) {
+            t.join(500);
+        }
+
         scheduler.stop();
 
         logger.info("Demo", "---------------------------------------------------------------");

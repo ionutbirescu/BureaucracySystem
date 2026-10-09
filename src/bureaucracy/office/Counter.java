@@ -73,17 +73,14 @@ public final class Counter {
                 return false;
             }
 
-            // Fast exit / redirect if caller chose not to wait during active/pending break or busy desk
+            // If caller chooses not to wait during active/pending break or busy desk, deflect immediately
             if (!waitForBreak && (onBreak || breakPending || serving)) {
                 logger.warn(id, customer + " found counter unavailable – redirecting/re-queueing");
                 return false;
             }
 
-            // Loop guards against spurious wakeups
+            // Loop guards against spurious wakeups (only entered when waitForBreak is true)
             while (open && (serving || onBreak || breakPending)) {
-                if (!waitForBreak && (onBreak || breakPending)) {
-                    return false;
-                }
                 notOnBreak.await();
             }
 
@@ -100,30 +97,30 @@ public final class Counter {
 
         // Processing occurs outside the lock so status queries and break requests are not blocked
         long start = System.currentTimeMillis();
-        boolean completedCleanly = false;
         try {
             Thread.sleep(document.getProcessingTimeMs());
-            completedCleanly = true;
-        } finally {
             long elapsed = System.currentTimeMillis() - start;
+            lock.lock();
+            try {
+                customersServed.incrementAndGet();
+                totalServiceTimeMs.addAndGet(elapsed);
+                logger.info(id, customer + " received " + document.getName()
+                        + " (" + elapsed + " ms)");
+            } finally {
+                lock.unlock();
+            }
+            return true;
+        } finally {
+            // Always clean up the serving state and wake waiting threads, even on InterruptedException
             lock.lock();
             try {
                 serving = false;
                 heldBy = null;
-                if (completedCleanly) {
-                    customersServed.incrementAndGet();
-                    totalServiceTimeMs.addAndGet(elapsed);
-                    logger.info(id, customer + " received " + document.getName()
-                            + " (" + elapsed + " ms)");
-                }
-                // Notify waiting clerk or waiting customers
                 notOnBreak.signalAll();
             } finally {
                 lock.unlock();
             }
         }
-
-        return completedCleanly;
     }
 
     /**
