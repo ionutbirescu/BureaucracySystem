@@ -1,9 +1,6 @@
 package bureaucracy.harness;
 
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.Arrays;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -27,19 +24,24 @@ public final class Harness {
 
     private record Outcome(Version version, String verdict, boolean ok, long ms, Path log) {}
 
-    private static final String LAUNCH = "--launch";
-
     private Harness() {}
 
-    public static void main(String[] args) throws Exception {
-        if (args.length > 1 && args[0].equals(LAUNCH)) {
-            launch(args[1], Arrays.copyOfRange(args, 2, args.length));
+    static void main(String[] args) throws IOException, InterruptedException {
+        int customers;
+        try {
+            customers = args.length > 0 ? Integer.parseInt(args[0]) : 10;
+        } catch (NumberFormatException e) {
+            customers = -1;
+        }
+        if (customers <= 0) {
+            System.err.println("Usage: Harness [customers]   (customers must be a positive number)");
+            System.exit(2);
             return;
         }
-        String customers = args.length > 0 ? args[0] : "10";
+
         List<Version> versions = List.of(
                 new Version("correct", "bureaucracy.simulation.SimulationMain",
-                        List.of("config/simulation.properties", customers), 180_000,
+                        List.of("config/simulation.properties", Integer.toString(customers)), 180_000,
                         "all customers served, no duplicates", "RESULT: CONSISTENT"),
                 new Version("faulty1", "bureaucracy.faulty1.Faulty1Demo", List.of(), 60_000,
                         "data race exposed", "defects successfully demonstrated"),
@@ -81,8 +83,6 @@ public final class Harness {
         command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
         command.add("-cp");
         command.add(System.getProperty("java.class.path"));
-        command.add(Harness.class.getName());
-        command.add(LAUNCH);
         command.add(version.mainClass());
         command.addAll(version.args());
 
@@ -94,8 +94,9 @@ public final class Harness {
         boolean exited = process.waitFor(version.timeoutMs(), TimeUnit.MILLISECONDS);
         long ms = System.currentTimeMillis() - start;
         if (!exited) {
-            process.destroyForcibly().waitFor();
-            return new Outcome(version, "HUNG", false, ms, log);
+            process.destroyForcibly();
+            boolean killed = process.waitFor(5, TimeUnit.SECONDS);
+            return new Outcome(version, killed ? "HUNG" : "HUNG+ALIVE", false, ms, log);
         }
 
         String output = Files.readString(log);
@@ -104,23 +105,6 @@ public final class Harness {
         boolean exitOk = process.exitValue() == 0;
         boolean ok = markerSeen && exitOk;
         return new Outcome(version, ok ? "OK" : "FAILED(" + process.exitValue() + ")", ok, ms, log);
-    }
-
-    /**
-     * Child-JVM side: calls the version's main through reflection, so package-private
-     * "static void main" methods (allowed by JDK 25+) also start on older JDKs.
-     */
-    private static void launch(String mainClass, String[] args) throws Exception {
-        Method main = Class.forName(mainClass).getDeclaredMethod("main", String[].class);
-        main.setAccessible(true);
-        try {
-            main.invoke(null, (Object) args);
-        } catch (InvocationTargetException e) {
-            if (e.getCause() instanceof Exception cause) {
-                throw cause;
-            }
-            throw e;
-        }
     }
 
     private static boolean classExists(String className) {

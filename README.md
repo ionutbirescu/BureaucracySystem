@@ -14,7 +14,8 @@ The project has **three versions**:
 | Faulty 2  | Deadlock: a customer holds counter B while waiting for office A      | `bureaucracy.faulty2.DeadlockDemo`      |
 
 ## Requirements
-- JDK 21 or newer (the team uses a recent JDK; the build targets release 21)
+- JDK 25 or newer (the project JDK is openjdk-27). The `main` methods are package-private
+  (`static void main`, JDK 25+), as Qodana recommends for this language level.
 - Maven (only for compiling and running the tests). In IntelliJ: right-click `pom.xml` -> *Add as Maven Project*.
 
 ## Build, run, test

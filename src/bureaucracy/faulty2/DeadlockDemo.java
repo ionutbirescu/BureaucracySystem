@@ -33,7 +33,7 @@ public final class DeadlockDemo {
 
     public record Result(Mode mode, DeadlockDetector.Report report, Map<String, CustomerTask.Outcome> outcomes) {
         public boolean asExpected() {
-            return mode == Mode.FAULTY ? report.deadlocked() : !report.deadlocked();
+            return (mode == Mode.FAULTY) == report.deadlocked();
         }
     }
 
@@ -44,7 +44,7 @@ public final class DeadlockDemo {
 
     private DeadlockDemo() {}
 
-    public static void main(String[] args) throws InterruptedException {
+    static void main(String[] args) throws InterruptedException {
         Mode mode = args.length > 0 && args[0].equals("--fixed") ? Mode.FIXED : Mode.FAULTY;
         SimulationLogger logger = new SimulationLogger();
         Result result = run(mode, logger);

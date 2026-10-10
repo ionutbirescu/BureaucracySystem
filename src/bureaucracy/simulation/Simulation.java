@@ -150,7 +150,9 @@ public final class Simulation {
         if (pool != null) {
             pool.shutdownNow();
         }
-        terminated.await(waitMs, TimeUnit.MILLISECONDS);
+        if (!terminated.await(waitMs, TimeUnit.MILLISECONDS)) {
+            logger.warn(SRC, "simulation still shutting down after " + waitMs + " ms");
+        }
     }
 
     private void shutdown(BreakScheduler breaks) throws InterruptedException {
@@ -161,7 +163,9 @@ public final class Simulation {
                 if (!pool.awaitTermination(5, TimeUnit.SECONDS)) {
                     logger.warn(SRC, "customers did not leave in time, interrupting");
                     pool.shutdownNow();
-                    pool.awaitTermination(5, TimeUnit.SECONDS);
+                    if (!pool.awaitTermination(5, TimeUnit.SECONDS)) {
+                        logger.error(SRC, "some customer threads ignore interruption, leaving them behind");
+                    }
                 }
             }
             if (breaks != null) {

@@ -18,7 +18,7 @@ public final class SimulationMain {
 
     private SimulationMain() {}
 
-    public static void main(String[] args) throws InterruptedException {
+    static void main(String[] args) throws InterruptedException {
         Path configPath = Path.of(args.length > 0 ? args[0] : "config/simulation.properties");
         int customers;
         SimulationConfig config;

@@ -17,6 +17,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
@@ -66,30 +70,47 @@ public final class DeadlockDetector {
     /** Observes the system for windowMs, sampling every periodMs, and reports what it saw. */
     public Report observe(long windowMs, long periodMs) throws InterruptedException {
         long before = progress.getAsLong();
-        long deadline = System.currentTimeMillis() + windowMs;
-        boolean cycleEverySample = true;
-        List<String> cycle = List.of();
-        List<String> jvmThreads = List.of();
-
-        while (true) {
-            jvmThreads = jvmDeadlockedThreads();
-            Optional<List<String>> found = graphSupplier.get().findCycle();
-            if (found.isPresent()) {
-                cycle = found.get();
-            } else {
-                cycleEverySample = false;
-                cycle = List.of();
-            }
-            if (!jvmThreads.isEmpty() || System.currentTimeMillis() >= deadline) {
-                break;
-            }
-            Thread.sleep(periodMs);
-        }
+        Sampler sampler = new Sampler();
+        boolean jvmFoundOne;
+        try (ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "deadlock-detector");
+            t.setDaemon(true);
+            return t;
+        })) {
+            timer.scheduleAtFixedRate(sampler, 0, periodMs, TimeUnit.MILLISECONDS);
+            // returns early only if the JVM itself found a lock cycle
+            jvmFoundOne = sampler.jvmFoundOne.await(windowMs, TimeUnit.MILLISECONDS);
+            timer.shutdownNow();
+        } // close() waits for the sampler to stop, so its fields are safe to read below
 
         long after = progress.getAsLong();
         boolean stalled = after == before;
-        boolean deadlocked = !jvmThreads.isEmpty() || (cycleEverySample && !cycle.isEmpty() && stalled);
-        return new Report(deadlocked, cycle, jvmThreads, before, after, deadlocked ? threadDump() : "");
+        boolean deadlocked = jvmFoundOne || !sampler.jvmThreads.isEmpty()
+                || (sampler.cycleEverySample && !sampler.cycle.isEmpty() && stalled);
+        return new Report(deadlocked, sampler.cycle, sampler.jvmThreads, before, after,
+                deadlocked ? threadDump() : "");
+    }
+
+    /** One sample per tick; runs on the single timer thread, read after the timer has terminated. */
+    private final class Sampler implements Runnable {
+        final CountDownLatch jvmFoundOne = new CountDownLatch(1);
+        volatile boolean cycleEverySample = true;
+        volatile List<String> cycle = List.of();
+        volatile List<String> jvmThreads = List.of();
+
+        @Override
+        public void run() {
+            List<String> found = jvmDeadlockedThreads();
+            Optional<List<String>> graphCycle = graphSupplier.get().findCycle();
+            cycle = graphCycle.orElse(List.of());
+            if (graphCycle.isEmpty()) {
+                cycleEverySample = false;
+            }
+            if (!found.isEmpty()) {
+                jvmThreads = found;
+                jvmFoundOne.countDown();
+            }
+        }
     }
 
     /** Watched threads the JVM itself considers deadlocked (empty if none). */
@@ -146,12 +167,13 @@ public final class DeadlockDetector {
             String current = null;
             for (String line : Files.readAllLines(file)) {
                 String trimmed = line.trim();
-                // thread header: #123 "name" virtual
+                // thread header: #123 "name" virtual [STATE timestamp]  (the tail varies by JDK)
                 if (trimmed.startsWith("#") && trimmed.contains("\"")) {
                     int first = trimmed.indexOf('"');
                     int last = trimmed.lastIndexOf('"');
                     String name = last > first ? trimmed.substring(first + 1, last) : "";
-                    current = trimmed.endsWith("virtual") && matches(name) ? name : null;
+                    boolean virtual = trimmed.substring(last + 1).trim().startsWith("virtual");
+                    current = virtual && matches(name) ? name : null;
                     if (current != null) {
                         stacks.put(current, new ArrayList<>());
                     }
@@ -166,7 +188,9 @@ public final class DeadlockDetector {
         } finally {
             if (file != null) {
                 try {
-                    Files.deleteIfExists(file);
+                    if (Files.exists(file)) {
+                        Files.delete(file);
+                    }
                 } catch (IOException ignored) {
                     // a leftover temp file is harmless
                 }
