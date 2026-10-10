@@ -8,7 +8,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class Office {
+public final class Office implements OfficeAPI {
 
     private final String id;
     private final String name;
@@ -46,6 +46,7 @@ public final class Office {
         logger.info(id, name + " closed");
     }
 
+    @Override
     public CompletableFuture<Boolean> enqueue(Customer customer, String documentId) {
         Document doc = issuableDocuments.get(documentId);
         if (doc == null) {
@@ -59,6 +60,7 @@ public final class Office {
         return future;
     }
 
+    @Override
     public boolean canIssue(String documentId) {
         return issuableDocuments.containsKey(documentId);
     }
@@ -118,6 +120,7 @@ public final class Office {
         return null;
     }
 
+    @Override
     public String getId()              { return id; }
     public String getName()            { return name; }
     public List<Counter> getCounters() { return counters; }
