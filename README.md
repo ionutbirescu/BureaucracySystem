@@ -18,6 +18,32 @@ The project has **three versions**:
   (`static void main`, JDK 25+), as Qodana recommends for this language level.
 - Maven (only for compiling and running the tests). In IntelliJ: right-click `pom.xml` -> *Add as Maven Project*.
 
+## Case menu
+
+The quickest way to run any case is the terminal menu:
+
+```
+menu.cmd                                         # Windows: compiles into target\classes and opens the menu
+java -cp target/classes bureaucracy.menu.MainMenu   # any OS, after mvn compile (or run MainMenu from IntelliJ)
+```
+
+```
+ 1) Correct version       all customers served, nobody twice or lost
+ 2) Faulty 1 - data race  unsynchronized queue: lost / duplicate customers
+ 3) Faulty 2 - deadlock   two customers hold a counter, wait for each other
+ 4) Faulty 2 - fixed      same scenario, stamp fetched first: no deadlock
+ 5) Coffee breaks         a counter takes rapid breaks, nobody is dropped
+ 6) Customers             customers follow their document plan (stub offices)
+ 7) Harness               runs versions 1-4 and prints a summary table
+ 0) Exit
+```
+
+Options 1 and 7 ask for the number of customers (and option 1 for the config file); press Enter
+to keep the default. Each case runs in its own JVM, so a `System.exit` or the stuck Faulty 2
+threads never affect the menu, and the menu prints the exit code when the case ends.
+`menu.cmd` uses `JAVA_HOME`, then `javac` on the PATH, then a JDK downloaded by IntelliJ (`%USERPROFILE%\.jdks`).
+Run it from any folder; start `MainMenu` by hand from the project root, so the config file is found.
+
 ## Build, run, test
 
 ```bash
@@ -74,6 +100,7 @@ customers ask, round-robin, for the documents that have prerequisites.
 | `bureaucracy.simulation`   | `SimulationMain`, `Simulation`, `SimulationMetrics`, `SimulationReport` | P4 |
 | `bureaucracy.diagnostics`  | `DeadlockDetector` (ThreadMXBean + wait-for graph + thread dump) | P4  |
 | `bureaucracy.harness`      | `Harness` (runs all versions)                                  | P4    |
+| `bureaucracy.menu`         | `MainMenu` (terminal menu that starts each case)               | all   |
 | `test/`                    | JUnit 5 tests                                                  | P4    |
 
 ## Correct version: startup, shutdown, metrics (P4)

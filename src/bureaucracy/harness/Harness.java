@@ -81,6 +81,10 @@ public final class Harness {
 
         List<String> command = new ArrayList<>();
         command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
+        // The log is read back as UTF-8; otherwise Windows writes it in Cp1252 and the "–" in
+        // some log messages makes Files.readString throw MalformedInputException
+        command.add("-Dstdout.encoding=UTF-8");
+        command.add("-Dstderr.encoding=UTF-8");
         command.add("-cp");
         command.add(System.getProperty("java.class.path"));
         command.add(version.mainClass());
