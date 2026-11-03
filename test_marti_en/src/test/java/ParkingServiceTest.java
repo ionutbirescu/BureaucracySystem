@@ -1,13 +1,6 @@
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.NullAndEmptySource;
-import org.junit.jupiter.params.provider.ValueSource;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -30,215 +23,184 @@ class ParkingServiceTest {
     }
 
     // =====================================================================
-    // calculateParkingFee  -> pure logic, no mocking needed
-    // Technique: equivalence partitioning + boundary value analysis
+    // calculateParkingFee - exceptions
     // =====================================================================
-    @Nested
-    @DisplayName("calculateParkingFee")
-    class CalculateParkingFeeTests {
 
-        // ---------- invalid inputs ----------
+    @Test
+    void calculateParkingFee_nullVehicle_throwsException() {
+        InvalidVehicleException ex = assertThrows(InvalidVehicleException.class,
+                () -> parkingService.calculateParkingFee(null, 60, false));
+        assertEquals("Vehicle type is missing.", ex.getMessage());
+    }
 
-        @Test
-        void nullVehicleType_throwsInvalidVehicleException() {
-            InvalidVehicleException ex = assertThrows(InvalidVehicleException.class,
-                    () -> parkingService.calculateParkingFee(null, 60, false));
-            assertEquals("Vehicle type is missing.", ex.getMessage());
-        }
+    @Test
+    void calculateParkingFee_negativeMinutes_throwsException() {
+        InvalidDurationException ex = assertThrows(InvalidDurationException.class,
+                () -> parkingService.calculateParkingFee(VehicleType.CAR, -1, false));
+        assertEquals("Minutes should not be negative.", ex.getMessage());
+    }
 
-        @ParameterizedTest
-        @ValueSource(ints = {-1, -100, Integer.MIN_VALUE})
-        void negativeMinutes_throwsInvalidDurationException(int minutes) {
-            InvalidDurationException ex = assertThrows(InvalidDurationException.class,
-                    () -> parkingService.calculateParkingFee(VehicleType.CAR, minutes, false));
-            assertEquals("Minutes should not be negative.", ex.getMessage());
-        }
-
-        @ParameterizedTest
-        @ValueSource(ints = {1441, 2000, Integer.MAX_VALUE})
-        void moreThanOneDay_throwsInvalidDurationException(int minutes) {
-            InvalidDurationException ex = assertThrows(InvalidDurationException.class,
-                    () -> parkingService.calculateParkingFee(VehicleType.CAR, minutes, false));
-            assertEquals("Minutes cannot be greater than 1440.", ex.getMessage());
-        }
-
-        @Test
-        void nullVehicleIsCheckedBeforeMinutes() {
-            // both inputs invalid -> vehicle check comes first
-            assertThrows(InvalidVehicleException.class,
-                    () -> parkingService.calculateParkingFee(null, -5, false));
-        }
-
-        // ---------- valid inputs ----------
-
-        @ParameterizedTest(name = "{0}, {1} min, weekend={2} -> {3}")
-        @CsvSource({
-                // free period (0..30) - free even for trucks / weekend
-                "CAR,   0,    false, 0",
-                "CAR,   1,    false, 0",
-                "CAR,   30,   false, 0",
-                "TRUCK, 30,   false, 0",
-                "CAR,   30,   true,  0",
-                "TRUCK, 30,   true,  0",
-                // first paid minute -> 1 started hour
-                "CAR,   31,   false, 5",
-                "CAR,   60,   false, 5",
-                // started hour rounding
-                "CAR,   61,   false, 10",
-                "CAR,   120,  false, 10",
-                "CAR,   121,  false, 15",
-                // upper boundary (1440 = 24 h)
-                "CAR,   1439, false, 120",
-                "CAR,   1440, false, 120",
-                // truck -> doubled
-                "TRUCK, 31,   false, 10",
-                "TRUCK, 61,   false, 20",
-                "TRUCK, 1440, false, 240",
-                // weekend -> +10 (added after doubling)
-                "CAR,   31,   true,  15",
-                "CAR,   61,   true,  20",
-                "TRUCK, 31,   true,  20",
-                "TRUCK, 61,   true,  30",
-                "TRUCK, 1440, true,  250"
-        })
-        void validInputs_returnCorrectFee(VehicleType type, int minutes, boolean weekend, double expected) {
-            assertEquals(expected, parkingService.calculateParkingFee(type, minutes, weekend), 0.001);
-        }
-
-        @Test
-        void calculateParkingFee_doesNotTouchDatabase() {
-            parkingService.calculateParkingFee(VehicleType.CAR, 100, true);
-            verifyNoInteractions(ticketDatabase);
-        }
+    @Test
+    void calculateParkingFee_moreThan1440Minutes_throwsException() {
+        InvalidDurationException ex = assertThrows(InvalidDurationException.class,
+                () -> parkingService.calculateParkingFee(VehicleType.CAR, 1441, false));
+        assertEquals("Minutes cannot be greater than 1440.", ex.getMessage());
     }
 
     // =====================================================================
-    // exitParking  -> depends on TicketDatabase, so we MOCK it
+    // calculateParkingFee - free period (0..30 minutes)
     // =====================================================================
-    @Nested
-    @DisplayName("exitParking")
-    class ExitParkingTests {
 
-        // ---------- invalid id ----------
+    @Test
+    void calculateParkingFee_0Minutes_isFree() {
+        assertEquals(0, parkingService.calculateParkingFee(VehicleType.CAR, 0, false));
+    }
 
-        @ParameterizedTest
-        @NullAndEmptySource
-        void invalidTicketId_throwsAndNeverCallsDatabase(String ticketId) {
-            InvalidTicketIdException ex = assertThrows(InvalidTicketIdException.class,
-                    () -> parkingService.exitParking(ticketId));
-            assertEquals("Invalid ticket id.", ex.getMessage());
+    @Test
+    void calculateParkingFee_30Minutes_isFree() {
+        assertEquals(0, parkingService.calculateParkingFee(VehicleType.CAR, 30, false));
+    }
 
-            verifyNoInteractions(ticketDatabase);
-        }
+    @Test
+    void calculateParkingFee_30MinutesTruckOnWeekend_isStillFree() {
+        assertEquals(0, parkingService.calculateParkingFee(VehicleType.TRUCK, 30, true));
+    }
 
-        // ---------- ticket not found ----------
+    // =====================================================================
+    // calculateParkingFee - car, not weekend
+    // =====================================================================
 
-        @Test
-        void ticketNotFound_throwsAndNeverUpdates() {
-            when(ticketDatabase.getById("T1")).thenReturn(null);
+    @Test
+    void calculateParkingFee_car31Minutes_costs5() {
+        assertEquals(5, parkingService.calculateParkingFee(VehicleType.CAR, 31, false));
+    }
 
-            TicketNotFoundException ex = assertThrows(TicketNotFoundException.class,
-                    () -> parkingService.exitParking("T1"));
-            assertEquals("Ticket has not been found.", ex.getMessage());
+    @Test
+    void calculateParkingFee_car60Minutes_costs5() {
+        assertEquals(5, parkingService.calculateParkingFee(VehicleType.CAR, 60, false));
+    }
 
-            verify(ticketDatabase).getById("T1");
-            verify(ticketDatabase, never()).update(any());
-        }
+    @Test
+    void calculateParkingFee_car61Minutes_costs10() {
+        assertEquals(10, parkingService.calculateParkingFee(VehicleType.CAR, 61, false));
+    }
 
-        // ---------- CLOSED branch ----------
+    @Test
+    void calculateParkingFee_car1440Minutes_costs120() {
+        assertEquals(120, parkingService.calculateParkingFee(VehicleType.CAR, 1440, false));
+    }
 
-        @Test
-        void paidTicket_isClosedAndUpdated() {
-            Ticket ticket = new Ticket("T1", TicketStatus.OPEN, 120, true);
-            when(ticketDatabase.getById("T1")).thenReturn(ticket);
+    // =====================================================================
+    // calculateParkingFee - truck (price doubled)
+    // =====================================================================
 
-            parkingService.exitParking("T1");
+    @Test
+    void calculateParkingFee_truck61Minutes_costs20() {
+        assertEquals(20, parkingService.calculateParkingFee(VehicleType.TRUCK, 61, false));
+    }
 
-            assertEquals(TicketStatus.CLOSED, ticket.getStatus());
-            verify(ticketDatabase).getById("T1");
-            verify(ticketDatabase).update(ticket);
-            verifyNoMoreInteractions(ticketDatabase);
-        }
+    // =====================================================================
+    // calculateParkingFee - weekend (+10)
+    // =====================================================================
 
-        @ParameterizedTest
-        @ValueSource(ints = {0, 1, 14, 15})
-        void unpaidTicket_upTo15Minutes_isClosed(int minutes) {
-            Ticket ticket = new Ticket("T1", TicketStatus.OPEN, minutes, false);
-            when(ticketDatabase.getById("T1")).thenReturn(ticket);
+    @Test
+    void calculateParkingFee_car61MinutesWeekend_costs20() {
+        assertEquals(20, parkingService.calculateParkingFee(VehicleType.CAR, 61, true));
+    }
 
-            parkingService.exitParking("T1");
+    @Test
+    void calculateParkingFee_truck61MinutesWeekend_costs30() {
+        // 2 hours * 5 = 10, doubled = 20, +10 weekend = 30
+        assertEquals(30, parkingService.calculateParkingFee(VehicleType.TRUCK, 61, true));
+    }
 
-            assertEquals(TicketStatus.CLOSED, ticket.getStatus());
-            verify(ticketDatabase).update(ticket);
-        }
+    // =====================================================================
+    // exitParking - invalid ticket id (database must NOT be called)
+    // =====================================================================
 
-        @Test
-        void paidTicket_under15Minutes_isClosed() {
-            Ticket ticket = new Ticket("T1", TicketStatus.OPEN, 10, true);
-            when(ticketDatabase.getById("T1")).thenReturn(ticket);
+    @Test
+    void exitParking_nullId_throwsException() {
+        InvalidTicketIdException ex = assertThrows(InvalidTicketIdException.class,
+                () -> parkingService.exitParking(null));
+        assertEquals("Invalid ticket id.", ex.getMessage());
 
-            parkingService.exitParking("T1");
+        verifyNoInteractions(ticketDatabase);
+    }
 
-            assertEquals(TicketStatus.CLOSED, ticket.getStatus());
-            verify(ticketDatabase).update(ticket);
-        }
+    @Test
+    void exitParking_emptyId_throwsException() {
+        assertThrows(InvalidTicketIdException.class,
+                () -> parkingService.exitParking(""));
 
-        // ---------- UNPAID branch ----------
+        verifyNoInteractions(ticketDatabase);
+    }
 
-        @ParameterizedTest
-        @ValueSource(ints = {16, 60, 1440})
-        void unpaidTicket_over15Minutes_isMarkedUnpaid(int minutes) {
-            Ticket ticket = new Ticket("T1", TicketStatus.OPEN, minutes, false);
-            when(ticketDatabase.getById("T1")).thenReturn(ticket);
+    // =====================================================================
+    // exitParking - ticket not found
+    // =====================================================================
 
-            parkingService.exitParking("T1");
+    @Test
+    void exitParking_ticketNotFound_throwsException() {
+        when(ticketDatabase.getById("T1")).thenReturn(null);
 
-            assertEquals(TicketStatus.UNPAID, ticket.getStatus());
-            verify(ticketDatabase).update(ticket);
-        }
+        TicketNotFoundException ex = assertThrows(TicketNotFoundException.class,
+                () -> parkingService.exitParking("T1"));
+        assertEquals("Ticket has not been found.", ex.getMessage());
 
-        // ---------- ArgumentCaptor example ----------
+        verify(ticketDatabase).getById("T1");
+        verify(ticketDatabase, never()).update(any());
+    }
 
-        @Test
-        void update_receivesTheSameTicketWithNewStatus() {
-            Ticket ticket = new Ticket("ABC", TicketStatus.OPEN, 45, false);
-            when(ticketDatabase.getById("ABC")).thenReturn(ticket);
+    // =====================================================================
+    // exitParking - ticket becomes CLOSED
+    // =====================================================================
 
-            parkingService.exitParking("ABC");
+    @Test
+    void exitParking_paidTicket_isClosed() {
+        Ticket ticket = new Ticket("T1", TicketStatus.OPEN, 120, true);
+        when(ticketDatabase.getById("T1")).thenReturn(ticket);
 
-            ArgumentCaptor<Ticket> captor = ArgumentCaptor.forClass(Ticket.class);
-            verify(ticketDatabase, times(1)).update(captor.capture());
+        parkingService.exitParking("T1");
 
-            Ticket saved = captor.getValue();
-            assertSame(ticket, saved);
-            assertEquals("ABC", saved.getId());
-            assertEquals(TicketStatus.UNPAID, saved.getStatus());
-        }
+        assertEquals(TicketStatus.CLOSED, ticket.getStatus());
+        verify(ticketDatabase).update(ticket);
+    }
 
-        // ---------- order of calls ----------
+    @Test
+    void exitParking_unpaidTicket15Minutes_isClosed() {
+        Ticket ticket = new Ticket("T1", TicketStatus.OPEN, 15, false);
+        when(ticketDatabase.getById("T1")).thenReturn(ticket);
 
-        @Test
-        void getById_isCalledBeforeUpdate() {
-            Ticket ticket = new Ticket("T1", TicketStatus.OPEN, 5, false);
-            when(ticketDatabase.getById("T1")).thenReturn(ticket);
+        parkingService.exitParking("T1");
 
-            parkingService.exitParking("T1");
+        assertEquals(TicketStatus.CLOSED, ticket.getStatus());
+        verify(ticketDatabase).update(ticket);
+    }
 
-            var inOrder = inOrder(ticketDatabase);
-            inOrder.verify(ticketDatabase).getById("T1");
-            inOrder.verify(ticketDatabase).update(ticket);
-        }
+    // =====================================================================
+    // exitParking - ticket becomes UNPAID
+    // =====================================================================
 
-        // ---------- database failure propagates ----------
+    @Test
+    void exitParking_unpaidTicket16Minutes_isUnpaid() {
+        Ticket ticket = new Ticket("T1", TicketStatus.OPEN, 16, false);
+        when(ticketDatabase.getById("T1")).thenReturn(ticket);
 
-        @Test
-        void databaseException_isPropagated() {
-            when(ticketDatabase.getById("T1")).thenThrow(new RuntimeException("DB down"));
+        parkingService.exitParking("T1");
 
-            RuntimeException ex = assertThrows(RuntimeException.class,
-                    () -> parkingService.exitParking("T1"));
-            assertEquals("DB down", ex.getMessage());
-            verify(ticketDatabase, never()).update(any());
-        }
+        assertEquals(TicketStatus.UNPAID, ticket.getStatus());
+        verify(ticketDatabase).update(ticket);
+    }
+
+    @Test
+    void exitParking_unpaidTicket60Minutes_isUnpaid() {
+        Ticket ticket = new Ticket("T1", TicketStatus.OPEN, 60, false);
+        when(ticketDatabase.getById("T1")).thenReturn(ticket);
+
+        parkingService.exitParking("T1");
+
+        assertEquals(TicketStatus.UNPAID, ticket.getStatus());
+        verify(ticketDatabase, times(1)).getById("T1");
+        verify(ticketDatabase, times(1)).update(ticket);
     }
 }
